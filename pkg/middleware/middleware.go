@@ -1225,6 +1225,27 @@ func (s *SouinBaseHandler) ServeHTTP(rw http.ResponseWriter, rq *http.Request, n
 
 						return err
 					}
+
+					// The origin answered, so its response is the one to send to
+					// the client, and it has to be sent once: falling through to
+					// the regular upstream path below re-runs the whole handler
+					// chain into the same buffer, which duplicated the body and
+					// queried the origin twice for a single request (#846).
+					// A `304` carries no body, so the stored one is served.
+					if statusCode == http.StatusNotModified {
+						rfc.SetCacheStatusHeader(response, storerName)
+						maps.Copy(customWriter.Header(), response.Header)
+						customWriter.WriteHeader(response.StatusCode)
+						customWriter.handleBuffer(func(b *bytes.Buffer) {
+							b.Reset()
+							_, _ = io.Copy(b, response.Body)
+							_ = response.Body.Close()
+						})
+					}
+
+					_, err = customWriter.Send()
+
+					return err
 				}
 
 			}
